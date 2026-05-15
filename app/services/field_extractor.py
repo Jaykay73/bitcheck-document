@@ -2,6 +2,7 @@ import re
 from collections.abc import Callable
 
 from app.schemas.document_verification import FieldExtractionAnalysis
+from app.services.document_context import canonical_document_type
 from app.utils.text_utils import normalize_text
 
 SUPPORTED_DOCUMENT_TYPES = {
@@ -15,6 +16,8 @@ SUPPORTED_DOCUMENT_TYPES = {
     "admission_letter",
     "result_slip",
     "contract",
+    "academic_publication",
+    "report",
     "general",
 }
 
@@ -62,6 +65,8 @@ EXPECTED_FIELDS = {
     "admission_letter": ["student_name", "institution", "program", "admission_date", "session"],
     "result_slip": ["student_name", "institution", "matric_number", "session", "courses", "grades"],
     "contract": ["parties", "effective_date", "termination_date", "governing_law", "payment_terms", "signatures_present"],
+    "academic_publication": ["title", "author", "publication_date", "doi", "publisher"],
+    "report": ["title", "author", "date"],
     "general": [],
 }
 
@@ -76,6 +81,8 @@ TYPE_KEYWORDS = {
     "admission_letter": ["admission letter", "offered admission", "admitted to", "program of study"],
     "result_slip": ["result slip", "statement of result", "subject", "score", "grade"],
     "contract": ["agreement", "contract", "party", "effective date", "governing law", "termination"],
+    "academic_publication": ["abstract", "citation", "doi", "journal", "keywords", "references", "published"],
+    "report": ["executive summary", "report", "findings", "recommendations"],
 }
 
 DATE_PATTERN = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{4})"
@@ -103,6 +110,8 @@ class FieldExtractor:
             "admission_letter": self._extract_admission_letter,
             "result_slip": self._extract_result_slip,
             "contract": self._extract_contract,
+            "academic_publication": self._extract_academic_publication,
+            "report": self._extract_report,
             "general": self._extract_general,
         }
         extracted_fields = extractors[inferred_type](cleaned_text)
@@ -271,6 +280,26 @@ class FieldExtractor:
             }
         )
 
+    def _extract_academic_publication(self, text: str) -> dict[str, object]:
+        return self._compact(
+            {
+                "title": self._first_match(text, [r"Article\s+(.{10,180}?)(?:\n| Ali | Abstract:)", r"^(.{10,180}?)(?:\n.+\nAbstract:)"]),
+                "author": self._first_match(text, [r"\n([A-Z][A-Za-z .,'-]{2,80}(?:\s*,\s*[A-Z][A-Za-z .,'-]{2,80}){0,5})\s*\n"]),
+                "publication_date": self._first_match(text, [r"(?:Published|Accepted|Received)[:\s]+([^\n\r]{6,40})"]),
+                "doi": self._first_match(text, [r"\b(?:https?://doi\.org/)?(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", r"\bdoi[:\s]+(10\.\d{4,9}/[-._;()/:A-Z0-9]+)"]),
+                "publisher": self._first_match(text, [r"Publisher[’']?s Note[:\s]+([^\n\r]{3,120})", r"Licensee\s+([A-Za-z .,'-]{3,80})"]),
+            }
+        )
+
+    def _extract_report(self, text: str) -> dict[str, object]:
+        return self._compact(
+            {
+                "title": self._first_match(text, [r"^(.{10,160}?)(?:\n|$)"]),
+                "author": self._first_labeled_line(text, ["author", "prepared by", "submitted by"]),
+                "date": self._date(text),
+            }
+        )
+
     def _extract_general(self, text: str) -> dict[str, object]:
         return self._compact({"date": self._date(text), "reference_number": self._first_match(text, [r"(?:reference|ref|no\.?)[:\s-]*([A-Z0-9/-]{4,40})"])})
 
@@ -279,7 +308,7 @@ class FieldExtractor:
         return "\n".join(line for line in lines if line).strip()
 
     def _normalize_type(self, document_type: str | None) -> str:
-        normalized = (document_type or "general").strip().lower().replace("-", "_").replace(" ", "_")
+        normalized = canonical_document_type(document_type)
         return normalized if normalized in SUPPORTED_DOCUMENT_TYPES else "general"
 
     def _first_match(self, text: str, patterns: list[str]) -> str | None:

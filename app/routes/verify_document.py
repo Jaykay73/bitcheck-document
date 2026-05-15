@@ -21,6 +21,7 @@ from app.schemas.document_verification import (
     VerificationInput,
 )
 from app.services.content_risk_analyzer import ContentRiskAnalyzer
+from app.services.document_context import canonical_document_type
 from app.services.field_extractor import FieldExtractor
 from app.services.file_validator import FileValidationError, FileValidator
 from app.services.forensic_analyzer import ForensicAnalyzer
@@ -160,6 +161,15 @@ async def verify_document(
         content_risk = _failed_content_risk("Content risk analysis failed.")
         deepseek_analysis = _skipped_deepseek(settings.deepseek_model, "DeepSeek analysis skipped after content risk failure.")
     warnings.extend(content_risk.warnings)
+    llm_document_type = canonical_document_type(deepseek_analysis.document_type_inferred)
+    if deepseek_analysis.used and llm_document_type != "general" and llm_document_type != fields.document_type:
+        try:
+            refined_fields = FieldExtractor().extract(field_text, llm_document_type)
+            if refined_fields.document_type == llm_document_type:
+                fields = refined_fields
+                warnings.extend(refined_fields.warnings)
+        except Exception as exc:
+            warnings.append(f"LLM-guided field refinement failed: {exc.__class__.__name__}")
 
     verification_input = VerificationInput(
         document_type=document_type,

@@ -64,3 +64,23 @@ def test_missing_expected_fields_increases_risk() -> None:
     assert sparse.missing_expected_fields
     assert sparse.field_risk_score > complete.field_risk_score
     assert sparse.field_confidence < complete.field_confidence
+
+
+def test_academic_publication_type_extracts_publication_fields() -> None:
+    text = """
+    Citation: Raza, A.; Munir, K. A Novel Deep Learning Approach for Deepfake Image Detection.
+    Article
+    A Novel Deep Learning Approach for Deepfake Image Detection
+    Ali Raza, Kashif Munir and Mubarak Almutairi
+    Abstract: Deepfake is utilized in synthetic media.
+    Published: 29 September 2022
+    https://doi.org/10.3390/app12199820
+    Publisher's Note: MDPI stays neutral with regard to jurisdictional claims.
+    """
+
+    result = FieldExtractor().extract(text, "academic_publication")
+
+    assert result.document_type == "academic_publication"
+    assert result.field_risk_score < 0.6
+    assert "many_expected_fields_missing" not in result.field_flags
+    assert result.extracted_fields["doi"] == "10.3390/app12199820"

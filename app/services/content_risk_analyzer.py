@@ -1,6 +1,7 @@
 from app.config import Settings
 from app.schemas.document_verification import ContentRiskAnalysis, DeepSeekAnalysis
 from app.services.deepseek_llm import DeepSeekLLM
+from app.services.document_context import is_contextual_longform
 from app.services.prompt_builder import PromptBuilder
 from app.utils.text_utils import excerpt_text, normalize_text
 
@@ -149,9 +150,24 @@ class ContentRiskAnalyzer:
         if not llm_payload:
             return ContentRiskAnalysis(checked=True, **heuristic)
 
-        suspicious_claims = list(dict.fromkeys(heuristic["suspicious_claims"] + self._list(llm_payload.get("suspicious_claims"))))
-        signals = list(dict.fromkeys(heuristic["signals"] + self._list(llm_payload.get("signals"))))
-        fraud_risk = max(heuristic["fraud_risk_score"], self._score(llm_payload.get("fraud_risk_score")))
+        llm_document_type = str(llm_payload.get("document_type") or "")
+        llm_risk = self._score(llm_payload.get("fraud_risk_score"))
+        llm_claims = self._list(llm_payload.get("suspicious_claims"))
+        llm_signals = self._list(llm_payload.get("signals"))
+        contextual_longform = is_contextual_longform(llm_document_type)
+
+        if contextual_longform and llm_risk <= 0.25:
+            suspicious_claims = llm_claims
+            signals = llm_signals
+            fraud_risk = min(max(llm_risk, heuristic["fraud_risk_score"] * 0.35), 0.25)
+            if heuristic["signals"]:
+                signals.append("heuristic_keywords_contextualized_by_llm")
+            signals = list(dict.fromkeys(signals))
+        else:
+            suspicious_claims = list(dict.fromkeys(heuristic["suspicious_claims"] + llm_claims))
+            signals = list(dict.fromkeys(heuristic["signals"] + llm_signals))
+            fraud_risk = max(heuristic["fraud_risk_score"], llm_risk)
+
         ai_likelihood = max(heuristic["ai_generated_text_likelihood"], self._score(llm_payload.get("ai_generated_text_likelihood")))
         summary = str(llm_payload.get("summary") or heuristic["summary"])
         return ContentRiskAnalysis(

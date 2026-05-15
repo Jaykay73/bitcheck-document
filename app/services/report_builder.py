@@ -67,6 +67,7 @@ class ReportBuilder:
                 "forensics": forensics,
                 "fields": fields,
                 "content_risk": content_risk,
+                "deepseek_analysis": deepseek_analysis,
             }
         )
         risk_flags = self._risk_flags(metadata, pdf_analysis, text_consistency, qr_analysis, forensics, fields, content_risk, trust)

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.schemas.document_verification import TrustAnalysis
+from app.services.document_context import is_contextual_longform
 
 WEIGHTS = {
     "metadata_risk": 0.12,
@@ -54,6 +55,7 @@ class TrustScorer:
         )
 
     def _available_risks(self, modules: dict[str, Any]) -> list[RiskModule]:
+        contextual_longform = self._contextual_longform(modules)
         candidates = {
             "metadata_risk": self._score(self._get(modules.get("metadata"), "metadata_risk_score")),
             "pdf_structure_risk": self._score(self._get(modules.get("pdf_analysis"), "structure_risk_score")),
@@ -63,6 +65,10 @@ class TrustScorer:
             "field_risk": self._score(self._get(modules.get("fields"), "field_risk_score")),
             "content_risk": self._score(self._get(modules.get("content_risk"), "fraud_risk_score")),
         }
+        if contextual_longform:
+            if self._has_consistent_text_and_metadata(modules):
+                candidates["forensic_risk"] = self._cap(candidates["forensic_risk"], 0.35)
+            candidates["field_risk"] = self._cap(candidates["field_risk"], 0.25)
         return [RiskModule(key, score) for key, score in candidates.items() if score is not None]
 
     def _weighted_risk(self, risk_modules: list[RiskModule]) -> float:
@@ -79,6 +85,7 @@ class TrustScorer:
         text_consistency = modules.get("text_consistency")
         forensics = modules.get("forensics")
         text_extraction = modules.get("text_extraction")
+        contextual_longform = self._contextual_longform(modules)
 
         qr_flags = set(self._get(qr, "flags") or [])
         if qr_flags.intersection({"shortened_url", "suspicious_url_keyword"}):
@@ -89,7 +96,10 @@ class TrustScorer:
             overrides.append(("OCR/PDF text mismatch is strong.", "Suspicious"))
         if self._get(metadata, "ai_tool_detected"):
             overrides.append(("AI tool metadata detected.", "Suspicious"))
-        if (self._score(self._get(forensics, "visual_tampering_risk_score")) or 0) >= 0.5:
+        forensic_score = self._score(self._get(forensics, "visual_tampering_risk_score")) or 0
+        if contextual_longform and forensic_score >= 0.5 and self._has_consistent_text_and_metadata(modules):
+            overrides.append(("Visual forensic findings were downgraded because text, metadata, and LLM context fit a long-form document.", "Suspicious"))
+        elif forensic_score >= 0.5:
             overrides.append(("Strong visual tampering risk detected.", "High Risk"))
         if self._get(pdf, "is_encrypted") and not self._get(pdf, "rendered_pages"):
             overrides.append(("Encrypted PDF has limited extraction.", "Suspicious"))
@@ -103,6 +113,21 @@ class TrustScorer:
             if minimum_level is None or SEVERITY_ORDER[level] > SEVERITY_ORDER[minimum_level]:
                 minimum_level = level
         return [message for message, _ in overrides], minimum_level
+
+    def _contextual_longform(self, modules: dict[str, Any]) -> bool:
+        deepseek = modules.get("deepseek_analysis")
+        fields = modules.get("fields")
+        return is_contextual_longform(self._get(deepseek, "document_type_inferred")) or is_contextual_longform(self._get(fields, "document_type"))
+
+    def _has_consistent_text_and_metadata(self, modules: dict[str, Any]) -> bool:
+        metadata = modules.get("metadata")
+        text_consistency = modules.get("text_consistency")
+        content_risk = modules.get("content_risk")
+        metadata_low = (self._score(self._get(metadata, "metadata_risk_score")) or 0) <= 0.2
+        content_low = (self._score(self._get(content_risk, "fraud_risk_score")) or 0) <= 0.3
+        text_status = self._get(text_consistency, "status")
+        text_low = text_status in {"strong_match", "not_applicable"} or (self._score(self._get(text_consistency, "risk_score")) or 0) <= 0.2
+        return bool(metadata_low and content_low and text_low)
 
     def _insufficient_document_evidence(self, pdf: Any, metadata: Any, text_extraction: Any) -> bool:
         no_ocr = not self._get(text_extraction, "ocr_text_found")
@@ -133,6 +158,11 @@ class TrustScorer:
             return min(max(float(value), 0.0), 1.0)
         except (TypeError, ValueError):
             return None
+
+    def _cap(self, value: float | None, maximum: float) -> float | None:
+        if value is None:
+            return None
+        return min(value, maximum)
 
     def _get(self, value: Any, key: str) -> Any:
         if value is None:

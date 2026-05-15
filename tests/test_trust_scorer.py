@@ -59,6 +59,31 @@ def test_high_risk_override() -> None:
     assert "Strong visual tampering risk detected." in result.applied_overrides
 
 
+def test_academic_publication_context_prevents_forensics_only_block() -> None:
+    result = TrustScorer().score(
+        {
+            "metadata": {"metadata_risk_score": 0.0, "metadata_found": True},
+            "pdf_analysis": {"structure_risk_score": 0.0, "has_text_layer": True, "is_encrypted": False},
+            "text_extraction": {"ocr_text_found": True},
+            "text_consistency": {"risk_score": 0.03, "status": "strong_match"},
+            "qr_analysis": {"risk_score": 0.0, "flags": [], "qr_text_consistency": {"mismatch_flags": []}},
+            "forensics": {"visual_tampering_risk_score": 1.0},
+            "fields": {"document_type": "academic_publication", "field_risk_score": 0.2},
+            "content_risk": {"fraud_risk_score": 0.05},
+            "deepseek_analysis": {
+                "used": True,
+                "document_type_inferred": "academic_publication",
+                "external_verification_required": False,
+            },
+        }
+    )
+
+    assert result.risk_level in {"Low Risk", "Suspicious"}
+    assert result.decision in {"approve", "review"}
+    assert "Strong visual tampering risk detected." not in result.applied_overrides
+    assert any("downgraded" in override for override in result.applied_overrides)
+
+
 def test_insufficient_evidence_cap() -> None:
     result = TrustScorer().score({"content_risk": {"fraud_risk_score": 0.01}})
 

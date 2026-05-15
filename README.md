@@ -39,9 +39,11 @@ FastAPI /verify/document
   |
   +--> Content risk analyzer
   |       |
-  |       +--> Optional DeepSeek reasoning
+  |       +--> Optional DeepSeek reasoning and document context
   |
-  +--> Dynamic trust scorer
+  +--> LLM-guided field refinement
+  |
+  +--> Context-aware dynamic trust scorer
   |
   +--> Report builder
   |
@@ -61,9 +63,10 @@ Risk-based BitCheck JSON report
 - QR code detection and structural URL risk analysis.
 - Visual forensic risk signals and annotated output images.
 - Rule-based document type inference and structured field extraction.
-- Heuristic content risk analysis for fraud-like wording.
+- Heuristic content risk analysis for fraud-like wording, with LLM context when available.
 - Optional DeepSeek reasoning when an API key is configured.
-- Dynamic trust scoring with normalized module weights.
+- LLM-guided document-type refinement for cases where local rules infer the wrong category.
+- Context-aware trust scoring with normalized module weights.
 - Final report builder with limitations, warnings, risk flags, recommended actions, and relative output paths.
 
 ## Supported File Types
@@ -133,9 +136,13 @@ The field extractor uses regex and keyword rules to infer a document type and ex
 - `admission_letter`
 - `result_slip`
 - `contract`
+- `academic_publication`
+- `report`
 - `general`
 
 It computes missing expected fields, field confidence, and field risk.
+
+When DeepSeek is available, BitCheck can use `deepseek_analysis.document_type_inferred` to re-run field extraction with a better document type. For example, if local rules initially treat an academic article like an identity document, the LLM-inferred `academic_publication` type prevents irrelevant missing-field penalties such as missing date of birth or expiry date.
 
 ### Content Risk
 
@@ -147,6 +154,8 @@ The content risk analyzer always runs local heuristics for:
 - BVN, NIN, OTP, password, PIN, or verification-code requests
 - attempts to bypass official channels
 - unrealistic claims
+
+When DeepSeek classifies a document as a contextual long-form document, such as `academic_publication` or `report`, BitCheck reduces keyword-only false positives. Terms such as bank, transfer, NIN, PIN, or fraud may be valid research/reporting context rather than direct fraud instructions.
 
 ### Trust Scoring
 
@@ -163,6 +172,8 @@ content_risk:          0.13
 ```
 
 Only modules with numeric risk scores are included. Missing modules are not over-penalized. If too little evidence is available, the trust level is capped at review.
+
+For contextual long-form documents, the trust scorer also considers DeepSeek's inferred document type. If the text layer, OCR consistency, metadata, and content-risk context are low risk, visual forensic findings are downgraded to manual-review warnings instead of forcing a high-risk block by themselves. This avoids treating normal tables, embedded figures, or image grids in academic PDFs as proof of tampering.
 
 Trust levels:
 
@@ -185,6 +196,8 @@ DeepSeek is optional. When `DEEPSEEK_API_KEY` is configured and `run_llm_analysi
 - heuristic risk signals
 
 The prompt instructs DeepSeek to return JSON only, avoid certainty claims, avoid inventing external facts, avoid browsing the web, and mark external verification needs when official issuer confirmation is required.
+
+DeepSeek is used as a context and reconciliation layer, not as absolute proof. Its inferred document type can refine field extraction, contextualize keyword hits, and help the trust scorer resolve conflicts between local modules. Local validation, metadata checks, OCR, QR analysis, forensic signals, and trust scoring still run.
 
 ## Operation Without DeepSeek
 
@@ -399,7 +412,7 @@ Run tests:
 pytest -q
 ```
 
-The test suite covers validators, PDF/image processors, metadata analysis, QR URL analysis, live verifier helper behavior, field extraction, content risk, DeepSeek JSON parsing, trust scoring, and route-level document verification smoke tests.
+The test suite covers validators, PDF/image processors, metadata analysis, QR URL analysis, live verifier helper behavior, field extraction, content risk, DeepSeek JSON parsing, trust scoring, context-aware long-form document handling, and route-level document verification smoke tests.
 
 ## Limitations
 

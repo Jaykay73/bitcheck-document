@@ -58,3 +58,26 @@ def test_heuristic_fraud_detection_detects_bvn_payment_and_urgent_keywords(tmp_p
     assert "bvn" in result.suspicious_claims
     assert "payment" in result.suspicious_claims
     assert "urgent" in result.suspicious_claims
+
+
+def test_llm_context_downgrades_keyword_hits_in_academic_publication(tmp_path: Path) -> None:
+    analyzer = ContentRiskAnalyzer(make_settings(tmp_path))
+    heuristic = analyzer._heuristic_analysis(  # noqa: SLF001
+        "This journal article discusses transfer fraud, bank scams, NIN misuse, and PIN theft in prior cybercrime cases."
+    )
+
+    result = analyzer._merge_with_llm(  # noqa: SLF001
+        heuristic,
+        {
+            "document_type": "academic_publication",
+            "fraud_risk_score": 0.05,
+            "ai_generated_text_likelihood": 0.0,
+            "suspicious_claims": [],
+            "signals": [],
+            "summary": "Academic publication discussing fraud as research context.",
+        },
+    )
+
+    assert result.fraud_risk_score <= 0.25
+    assert result.suspicious_claims == []
+    assert "heuristic_keywords_contextualized_by_llm" in result.signals
