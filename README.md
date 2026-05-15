@@ -1,3 +1,12 @@
+---
+title: Bitcheck Document
+emoji: 📊
+colorFrom: blue
+colorTo: pink
+sdk: docker
+pinned: false
+---
+
 # BitCheck Document Verification API
 
 BitCheck Document Verification API is a FastAPI service for risk-based document verification. It accepts PDF and image documents, runs a sequence of local analysis modules, optionally adds DeepSeek reasoning when configured, and returns a structured trust report for review workflows.
@@ -417,3 +426,5 @@ The test suite covers validators, PDF/image processors, metadata analysis, QR UR
 - stamp/signature detection model
 - document layout transformer
 - Supabase storage and audit history
+
+Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
